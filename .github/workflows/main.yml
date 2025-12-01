@@ -1,0 +1,16 @@
+name: Gerar APK Android
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - run: pip install flet
+    - run: flet build apk --module-name main
+    - uses: actions/upload-artifact@v3
+      with:
+        name: retro-estante-apk
+        path: build/apk/*.apk
