@@ -6,13 +6,25 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    # --- NOVO BLOCO: Instala bibliotecas que faltavam no Linux ---
+    - name: Instalar Dependencias do Linux
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
+    # -------------------------------------------------------------
+
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         
     - run: pip install flet
     
-    - run: flet build apk --module-name main
+    # Garante que o requirements existe, senao cria um
+    - name: Verificar Requirements
+      run: |
+        if [ ! -f requirements.txt ]; then echo "flet" > requirements.txt; fi
+    
+    - run: flet build apk --module-name main --verbose
     
     - uses: actions/upload-artifact@v4
       with:
