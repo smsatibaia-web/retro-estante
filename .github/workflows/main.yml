@@ -6,44 +6,51 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Baixa seu código
+    # 1. Baixa o código
     - uses: actions/checkout@v4
     
-    # 2. INSTALAÇÃO CRÍTICA: Bibliotecas do Linux (Corrige o erro do GTK 3.0)
-    - name: Instalar Dependencias do Linux
+    # 2. Instala dependências do Linux (Resolve o erro do GTK)
+    - name: Instalar Dependencias Linux
       run: |
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
 
-    # 3. Instala o Java 17 (Necessário para Android)
+    # 3. Configura o Python
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # 4. Configura o Java 17 (Necessário para as ferramentas Android novas)
     - uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
 
-    # 4. Instala o Android SDK
+    # 5. Configura o Android SDK
     - uses: android-actions/setup-android@v3
 
-    # 5. Aceita as licenças do Android (Corrige o erro de licença)
-    - name: Aceitar Licencas Android
+    # 6. Aceita as Licenças do Android (O Pulo do Gato)
+    - name: Aceitar Licencas
       run: |
         yes | sdkmanager --licenses
-        
-    # 6. Instala o Python
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        
-    # 7. Instala o Flet e cria o requirements se não existir
+    
+    # 7. Instala o Flet e Dependências
     - run: pip install flet
+    - run: pip install fpdf
+    
+    # 8. Garante que o requirements existe
     - name: Verificar Requirements
       run: |
-        if [ ! -f requirements.txt ]; then echo "flet" > requirements.txt; fi
+        if [ ! -f requirements.txt ]; then 
+          echo "flet" > requirements.txt
+          echo "fpdf" >> requirements.txt
+        fi
     
-    # 8. Compila o APK (Agora com o ambiente 100% pronto)
-    - run: flet build apk --module-name main
+    # 9. Compila o APK
+    # O comando "yes" aceita qualquer pergunta extra que o Flutter possa fazer
+    - run: yes | flet build apk --module-name main --verbose
     
-    # 9. Disponibiliza o Download
+    # 10. Envia o APK
     - uses: actions/upload-artifact@v4
       with:
         name: retro-estante-apk
