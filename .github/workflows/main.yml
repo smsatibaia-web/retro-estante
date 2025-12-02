@@ -8,7 +8,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    # 1. Prepara o Linux (Bibliotecas Gráficas Essenciais)
+    # 1. Instalação do Linux (Para o Flutter funcionar)
     - name: Instalar Dependencias Linux
       run: |
         sudo apt-get update
@@ -33,17 +33,17 @@ jobs:
       with:
         python-version: '3.11'
 
-    # 6. Instala Flet
+    # 6. Instala Flet e FPDF2 (A versão moderna)
     - run: pip install --upgrade pip
-    - run: pip install flet fpdf
+    - run: pip install flet fpdf2
     
-    # 7. Cria arquivo de requisitos limpo
+    # 7. Cria arquivo de requisitos CORRETO
     - name: Criar Requirements
       run: |
         echo "flet" > requirements.txt
-        echo "fpdf" >> requirements.txt
+        echo "fpdf2" >> requirements.txt
     
-    # 8. Compila o APK (Com limite de memória para não travar o servidor)
+    # 8. Compila o APK (Com limite de memória)
     - name: Compilar APK
       env:
         GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -Dfile.encoding=UTF-8"'
