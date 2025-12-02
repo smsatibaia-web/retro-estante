@@ -6,50 +6,50 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 1. Baixa o código do repositório
     - uses: actions/checkout@v4
     
-    # 2. INSTALAÇÃO DO LINUX (Resolve o erro do GTK e Build Tools)
-    # Adicionei clang, cmake, ninja e pkg-config que são essenciais para o Flutter no Linux
+    # 1. Prepara o Linux (Bibliotecas Gráficas Essenciais)
     - name: Instalar Dependencias Linux
       run: |
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio clang cmake ninja-build pkg-config
 
-    # 3. Configura o Java 17 (Padrão para Android atual)
+    # 2. Configura Java 17
     - uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
 
-    # 4. Configura o Android SDK
+    # 3. Configura Android SDK
     - uses: android-actions/setup-android@v3
 
-    # 5. Aceita as Licenças do Android
-    # O "|| true" garante que o script não pare se alguma licença já estiver aceita
+    # 4. Aceita Licenças
     - name: Aceitar Licencas
       run: |
         yes | sdkmanager --licenses || true
     
-    # 6. Configura Python
+    # 5. Configura Python
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    # 7. Instala Flet e FPDF
+    # 6. Instala Flet
+    - run: pip install --upgrade pip
     - run: pip install flet fpdf
     
-    # 8. Garante o arquivo requirements.txt
-    - name: Verificar Requirements
+    # 7. Cria arquivo de requisitos limpo
+    - name: Criar Requirements
       run: |
         echo "flet" > requirements.txt
         echo "fpdf" >> requirements.txt
     
-    # 9. Compila o APK
-    # O argumento --verbose nos ajuda a ver exatamente onde trava, se travar
-    - run: flet build apk --module-name main --verbose
+    # 8. Compila o APK (Com limite de memória para não travar o servidor)
+    - name: Compilar APK
+      env:
+        GRADLE_OPTS: '-Dorg.gradle.jvmargs="-Xmx2048m -Dfile.encoding=UTF-8"'
+      run: flet build apk --module-name main --verbose
     
-    # 10. Salva o APK gerado para download
+    # 9. Upload
     - uses: actions/upload-artifact@v4
       with:
         name: retro-estante-apk
