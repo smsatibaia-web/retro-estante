@@ -1,31 +1,45 @@
 name: Gerar APK Android
 on: [push]
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
+    # 1. Baixa seu código
     - uses: actions/checkout@v4
     
-    # --- NOVO BLOCO: Instala bibliotecas que faltavam no Linux ---
-    - name: Instalar Dependencias do Linux
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-tools gstreamer1.0-x gstreamer1.0-alsa gstreamer1.0-gl gstreamer1.0-gtk3 gstreamer1.0-qt5 gstreamer1.0-pulseaudio
-    # -------------------------------------------------------------
+    # 2. Instala o Java 17 (Obrigatório para Android atual)
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
+    # 3. Instala o Android SDK separadamente
+    - uses: android-actions/setup-android@v3
+
+    # 4. O PULO DO GATO: Aceita todas as licenças automaticamente
+    - name: Aceitar Licencas Android
+      run: |
+        yes | sdkmanager --licenses
+        
+    # 5. Instala o Python
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         
+    # 6. Instala o Flet
     - run: pip install flet
-    
-    # Garante que o requirements existe, senao cria um
+
+    # 7. Garante que o requirements existe
     - name: Verificar Requirements
       run: |
         if [ ! -f requirements.txt ]; then echo "flet" > requirements.txt; fi
     
-    - run: flet build apk --module-name main --verbose
+    # 8. Compila (Agora ele vai encontrar o Android já instalado e licenciado)
+    - run: flet build apk --module-name main
     
+    # 9. Envia o APK para download
     - uses: actions/upload-artifact@v4
       with:
         name: retro-estante-apk
