@@ -14,9 +14,10 @@ try:
 except ImportError:
     HAS_FPDF = False
 
-# --- CONSTANTES ---
-DB_FILE = "retro_collection_v3.db"
-IMAGE_DIR = "retro_images"
+# --- CONFIGURAÇÃO DE CAMINHOS ---
+USER_HOME = os.path.expanduser("~")
+DB_FILE = os.path.join(USER_HOME, "retro_collection_v3.db")
+IMAGE_DIR = os.path.join(USER_HOME, "retro_images")
 
 # Cores
 COLOR_BG = "#1E1E1E"        
@@ -27,7 +28,7 @@ COLOR_ERROR = "#ff7b7b"
 COLOR_SUCCESS = "#2ec27e"
 COLOR_WARNING = "#e5a50a"
 
-# --- FUNÇÃO GLOBAL (Correção do Erro) ---
+# --- FUNÇÃO GLOBAL ---
 def formatar_moeda(val):
     try: return f"R$ {float(val):,.2f}"
     except: return "R$ 0.00"
@@ -47,6 +48,9 @@ if HAS_FPDF:
 class DatabaseManager:
     def __init__(self):
         self.conn = None
+        if not os.path.exists(IMAGE_DIR):
+            try: os.makedirs(IMAGE_DIR)
+            except: pass 
         self.init_db()
 
     def connect(self):
@@ -58,38 +62,40 @@ class DatabaseManager:
         if self.conn: self.conn.close()
 
     def init_db(self):
-        c = self.connect()
-        for table in ["Systems", "Categories", "Regions", "Authenticities"]:
-            c.execute(f"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY, name TEXT UNIQUE)")
-        
-        c.execute("""CREATE TABLE IF NOT EXISTS Items (
-            id TEXT PRIMARY KEY, name TEXT, category_id TEXT, system_id TEXT, authenticity_id TEXT, region_id TEXT,
-            has_box INTEGER, has_manual INTEGER, condition_notes TEXT, storage_location TEXT,
-            purchase_price REAL, market_value REAL, selling_price REAL, is_for_sale INTEGER,
-            image_filename TEXT, last_modified TIMESTAMP, is_deleted INTEGER DEFAULT 0,
-            status TEXT DEFAULT 'Active', exit_date TEXT, exit_reason TEXT
-        )""")
-        
-        try: c.execute("SELECT status FROM Items LIMIT 1")
-        except:
-            try: c.execute("ALTER TABLE Items ADD COLUMN status TEXT DEFAULT 'Active'")
-            except: pass
-            try: c.execute("ALTER TABLE Items ADD COLUMN exit_date TEXT")
-            except: pass
-            try: c.execute("ALTER TABLE Items ADD COLUMN exit_reason TEXT")
-            except: pass
+        try:
+            c = self.connect()
+            for table in ["Systems", "Categories", "Regions", "Authenticities"]:
+                c.execute(f"CREATE TABLE IF NOT EXISTS {table} (id TEXT PRIMARY KEY, name TEXT UNIQUE)")
+            
+            c.execute("""CREATE TABLE IF NOT EXISTS Items (
+                id TEXT PRIMARY KEY, name TEXT, category_id TEXT, system_id TEXT, authenticity_id TEXT, region_id TEXT,
+                has_box INTEGER, has_manual INTEGER, condition_notes TEXT, storage_location TEXT,
+                purchase_price REAL, market_value REAL, selling_price REAL, is_for_sale INTEGER,
+                image_filename TEXT, last_modified TIMESTAMP, is_deleted INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'Active', exit_date TEXT, exit_reason TEXT
+            )""")
+            
+            try: c.execute("SELECT status FROM Items LIMIT 1")
+            except:
+                columns = ["status TEXT DEFAULT 'Active'", "exit_date TEXT", "exit_reason TEXT"]
+                for col in columns:
+                    try: c.execute(f"ALTER TABLE Items ADD COLUMN {col}")
+                    except: pass
 
-        c.execute("""CREATE TABLE IF NOT EXISTS ItemImages (
-            id TEXT PRIMARY KEY, item_id TEXT, filename TEXT,
-            FOREIGN KEY(item_id) REFERENCES Items(id)
-        )""")
+            c.execute("""CREATE TABLE IF NOT EXISTS ItemImages (
+                id TEXT PRIMARY KEY, item_id TEXT, filename TEXT,
+                FOREIGN KEY(item_id) REFERENCES Items(id)
+            )""")
 
-        c.execute("""CREATE TABLE IF NOT EXISTS MaintenanceLogs (
-            id TEXT PRIMARY KEY, item_id TEXT, log_date TEXT, description TEXT,
-            FOREIGN KEY(item_id) REFERENCES Items(id)
-        )""")
-        self.conn.commit()
-        self.close()
+            c.execute("""CREATE TABLE IF NOT EXISTS MaintenanceLogs (
+                id TEXT PRIMARY KEY, item_id TEXT, log_date TEXT, description TEXT,
+                FOREIGN KEY(item_id) REFERENCES Items(id)
+            )""")
+            self.conn.commit()
+        except Exception as e:
+            print(f"Erro Fatal Init DB: {e}")
+        finally:
+            self.close()
 
     # --- Consultas ---
     def get_systems_with_count(self):
@@ -135,7 +141,7 @@ class DatabaseManager:
         imgs = self.get_images(item_id)
         if len(imgs) >= 5: return False, "Limite de 5 imagens."
         try: c = self.connect(); c.execute("INSERT INTO ItemImages (id, item_id, filename) VALUES (?,?,?)", (str(uuid.uuid4()), item_id, filename)); self.conn.commit(); self.close(); return True, "OK"
-        except: return False, "Erro BD"
+        except Exception as e: return False, str(e)
 
     def delete_image(self, img_id):
         try: c = self.connect(); c.execute("DELETE FROM ItemImages WHERE id=?", (img_id,)); self.conn.commit(); self.close(); return True
@@ -146,15 +152,15 @@ class DatabaseManager:
         try:
             c = self.connect()
             c.execute("UPDATE Items SET status = 'Removed', exit_date = ?, exit_reason = ? WHERE id = ?", (datetime.now().strftime("%d/%m/%Y"), f"{reason}: {details}", item_id))
-            self.conn.commit(); self.close(); return True
-        except: return False
+            self.conn.commit(); self.close(); return True, "OK"
+        except Exception as e: return False, str(e)
 
     def add_log(self, item_id, description):
-        if not description: return False
+        if not description: return False, "Vazio"
         try:
             c = self.connect(); c.execute("INSERT INTO MaintenanceLogs (id, item_id, log_date, description) VALUES (?,?,?,?)", (str(uuid.uuid4()), item_id, datetime.now().strftime("%d/%m/%Y"), description))
-            self.conn.commit(); self.close(); return True
-        except: return False
+            self.conn.commit(); self.close(); return True, "OK"
+        except Exception as e: return False, str(e)
 
     def get_logs(self, item_id):
         c = self.connect()
@@ -173,25 +179,34 @@ class DatabaseManager:
         return [ft.dropdown.Option(key=row['id'], text=row['name']) for row in self.get_list_raw(table)]
     def add_aux(self, table, name):
         try: c = self.connect(); c.execute(f"INSERT INTO {table} (id, name) VALUES (?,?)", (str(uuid.uuid4()), name.strip())); self.conn.commit(); self.close(); return True, "OK"
-        except: self.close(); return False, "Erro"
+        except Exception as e: self.close(); return False, str(e)
     def update_aux(self, table, uid, name):
         try: c = self.connect(); c.execute(f"UPDATE {table} SET name=? WHERE id=?", (name.strip(), uid)); self.conn.commit(); self.close(); return True, "OK"
-        except: return False, "Erro"
+        except Exception as e: return False, str(e)
     def delete_aux(self, table, uid):
         try: c = self.connect(); c.execute(f"DELETE FROM {table} WHERE id=?", (uid,)); self.conn.commit(); self.close(); return True
         except: return False
     def delete_item_permanent(self, uid):
-        c = self.connect(); c.execute("UPDATE Items SET is_deleted = 1 WHERE id = ?", (uid,)); self.conn.commit(); self.close()
+        try: c = self.connect(); c.execute("UPDATE Items SET is_deleted = 1 WHERE id = ?", (uid,)); self.conn.commit(); self.close(); return True
+        except: return False
     def get_item(self, uid):
         c = self.connect(); c.execute("SELECT * FROM Items WHERE id=?", (uid,)); row = c.fetchone(); self.close(); return row
     def save_item(self, data, uid=None):
         c = self.connect()
-        if not uid:
-            uid = str(uuid.uuid4())
-            c.execute("""INSERT INTO Items (id, name, system_id, category_id, region_id, authenticity_id, storage_location, purchase_price, market_value, selling_price, is_for_sale, condition_notes, has_box, has_manual, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active')""", (uid, data['name'], data['system_id'], data['category_id'], data['region_id'], data['authenticity_id'], data['storage_location'], data['purchase_price'], data['market_value'], data['selling_price'], data['is_for_sale'], data['condition_notes'], data['has_box'], data['has_manual']))
-        else:
-            c.execute("""UPDATE Items SET name=?, system_id=?, category_id=?, region_id=?, authenticity_id=?, storage_location=?, purchase_price=?, market_value=?, selling_price=?, is_for_sale=?, condition_notes=?, has_box=?, has_manual=? WHERE id=?""", (data['name'], data['system_id'], data['category_id'], data['region_id'], data['authenticity_id'], data['storage_location'], data['purchase_price'], data['market_value'], data['selling_price'], data['is_for_sale'], data['condition_notes'], data['has_box'], data['has_manual'], uid))
-        self.conn.commit(); self.close(); return uid
+        try:
+            if not uid:
+                new_uid = str(uuid.uuid4())
+                c.execute("""INSERT INTO Items (id, name, system_id, category_id, region_id, authenticity_id, storage_location, purchase_price, market_value, selling_price, is_for_sale, condition_notes, has_box, has_manual, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active')""", (new_uid, data['name'], data['system_id'], data['category_id'], data['region_id'], data['authenticity_id'], data['storage_location'], data['purchase_price'], data['market_value'], data['selling_price'], data['is_for_sale'], data['condition_notes'], data['has_box'], data['has_manual']))
+                res_id = new_uid
+            else:
+                c.execute("""UPDATE Items SET name=?, system_id=?, category_id=?, region_id=?, authenticity_id=?, storage_location=?, purchase_price=?, market_value=?, selling_price=?, is_for_sale=?, condition_notes=?, has_box=?, has_manual=? WHERE id=?""", (data['name'], data['system_id'], data['category_id'], data['region_id'], data['authenticity_id'], data['storage_location'], data['purchase_price'], data['market_value'], data['selling_price'], data['is_for_sale'], data['condition_notes'], data['has_box'], data['has_manual'], uid))
+                res_id = uid
+            self.conn.commit()
+            return True, res_id
+        except Exception as e:
+            return False, str(e)
+        finally:
+            self.close()
     def get_stats(self):
         c = self.connect(); c.execute("SELECT COUNT(*), SUM(purchase_price), SUM(market_value) FROM Items WHERE is_deleted=0 AND (status IS NULL OR status='Active')"); res = c.fetchone(); self.close(); return res
 
@@ -206,12 +221,14 @@ def main(page: ft.Page):
     page.title = "Retro-Estante"; page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = COLOR_BG; page.padding = 0
     page.theme = ft.Theme(color_scheme=ft.ColorScheme(primary=COLOR_PRIMARY, background=COLOR_BG, surface=COLOR_SURFACE))
+    
+    icon_path = os.path.join("assets", "icon.png")
+    if os.path.exists(icon_path): page.window_icon = icon_path
+    
     page.update()
 
     if page.platform in [ft.PagePlatform.WINDOWS, ft.PagePlatform.LINUX, ft.PagePlatform.MACOS]:
         page.add(ft.Container(content=ft.Row([ft.Text("12:30", size=12, color="#a0a0a0"), ft.Row([ft.Icon(ft.Icons.WIFI, size=14, color="#a0a0a0"), ft.Icon(ft.Icons.BATTERY_FULL, size=14, color="#a0a0a0")], spacing=5)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), bgcolor="#000000", height=30, padding=ft.padding.symmetric(horizontal=15)))
-
-    if not os.path.exists(IMAGE_DIR): os.makedirs(IMAGE_DIR)
 
     # Globais
     editing_id = None; picked_image_path = None; aux_context = {"table": "", "title": ""}; nav_context = {"sys_id": None, "sys_name": "", "cat_id": None, "cat_name": ""}
@@ -231,7 +248,7 @@ def main(page: ft.Page):
     save_file_picker = ft.FilePicker(); page.overlay.append(save_file_picker)
 
     def show_snack(msg, color=ft.Colors.GREEN_400):
-        page.snack_bar = ft.SnackBar(content=ft.Text(msg, color=color), bgcolor=COLOR_SURFACE)
+        page.snack_bar = ft.SnackBar(content=ft.Text(str(msg), color=ft.Colors.WHITE), bgcolor=color)
         page.snack_bar.open = True; page.update()
 
     # --- VIEWS ---
@@ -313,25 +330,34 @@ def main(page: ft.Page):
         def refresh_logs(ui=True):
             if not editing_id: return
             logs = db.get_logs(editing_id); lv_logs.controls.clear()
-            for l in logs: lv_logs.controls.append(ft.Container(content=ft.Column([ft.Row([ft.Text(l['log_date'], weight="bold", color=COLOR_PRIMARY), ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_size=20, icon_color="red", on_click=lambda e, lid=l['id']: del_log(lid))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), ft.Text(l['description'])]), bgcolor=ft.Colors.BLACK12, padding=10, border_radius=5))
+            for l in logs:
+                lv_logs.controls.append(ft.Container(content=ft.Column([ft.Row([ft.Text(l['log_date'], weight="bold", color=COLOR_PRIMARY), ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_size=20, icon_color="red", on_click=lambda e, lid=l['id']: del_log(lid))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), ft.Text(l['description'])]), bgcolor=ft.Colors.BLACK12, padding=10, border_radius=5))
             if ui: lv_logs.update()
         def add_log(e):
-            if editing_id and txt_log.value and db.add_log(editing_id, txt_log.value): txt_log.value=""; txt_log.update(); refresh_logs(); show_snack("Log Add")
+            ok, msg = db.add_log(editing_id, txt_log.value)
+            if editing_id and txt_log.value and ok: txt_log.value=""; txt_log.update(); refresh_logs(); show_snack("Log Add")
+            else: show_snack(msg, COLOR_ERROR)
         def del_log(lid): 
             if db.delete_log(lid): refresh_logs()
 
         def save_click(e):
             if not txt_name.value: show_snack("Nome Obrigatório!", COLOR_ERROR); return
             data = {'name': txt_name.value, 'system_id': dd_sys.value, 'category_id': dd_cat.value, 'region_id': dd_reg.value, 'authenticity_id': dd_auth.value, 'storage_location': txt_storage.value, 'purchase_price': float(txt_buy.value or 0), 'market_value': float(txt_mkt.value or 0), 'selling_price': float(txt_sell.value or 0), 'is_for_sale': 1 if chk_sale.value else 0, 'condition_notes': txt_notes.value, 'has_box': 1 if chk_box.value else 0, 'has_manual': 1 if chk_manual.value else 0}
-            new_id = db.save_item(data, editing_id)
-            if not editing_id: editing_id = new_id; show_snack("Item criado! Adicione fotos.", COLOR_SUCCESS); refresh_images(); page.update()
-            else: show_snack("Item atualizado!"); page.go("/")
+            
+            ok, result = db.save_item(data, editing_id)
+            if ok:
+                new_id = result
+                if not editing_id: editing_id = new_id; show_snack("Item criado! Adicione fotos.", COLOR_SUCCESS); refresh_images(); page.update()
+                else: show_snack("Item atualizado!", COLOR_SUCCESS); page.go("/")
+            else: show_snack(f"Erro ao salvar: {result}", COLOR_ERROR)
 
         dlg_baixa_reason = ft.Dropdown(label="Motivo", options=[ft.dropdown.Option("Venda"), ft.dropdown.Option("Troca"), ft.dropdown.Option("Doação"), ft.dropdown.Option("Descarte"), ft.dropdown.Option("Outro")])
         dlg_baixa_obs = ft.TextField(label="Detalhes")
         def confirm_baixa(e):
             if not dlg_baixa_reason.value: return
-            if db.write_off_item(editing_id, dlg_baixa_reason.value, dlg_baixa_obs.value): show_snack("Baixado!", COLOR_SUCCESS); page.close(dlg_baixa); page.go("/")
+            ok, msg = db.write_off_item(editing_id, dlg_baixa_reason.value, dlg_baixa_obs.value)
+            if ok: show_snack("Baixado!", COLOR_SUCCESS); page.close(dlg_baixa); page.go("/")
+            else: show_snack(f"Erro: {msg}", COLOR_ERROR)
         dlg_baixa = ft.AlertDialog(title=ft.Text("Dar Baixa"), content=ft.Column([ft.Text("O item sairá da coleção."), dlg_baixa_reason, dlg_baixa_obs], tight=True), actions=[ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg_baixa)), ft.TextButton("CONFIRMAR", on_click=confirm_baixa)])
         def open_baixa(e): page.open(dlg_baixa)
         def delete_permanent(e): 
@@ -353,32 +379,85 @@ def main(page: ft.Page):
         actions_bar = []
         if editing_id: actions_bar = [ft.PopupMenuButton(items=[ft.PopupMenuItem(text="Dar Baixa", icon=ft.Icons.ARCHIVE, on_click=open_baixa), ft.PopupMenuItem(text="Excluir", icon=ft.Icons.DELETE_FOREVER, on_click=delete_permanent)])]
 
-        return ft.View("/form", controls=[ft.AppBar(title=ft.Text("Item"), bgcolor=COLOR_SURFACE, actions=actions_bar), ft.Tabs(selected_index=0, tabs=[ft.Tab(text="Dados", icon=ft.Icons.INFO, content=ft.ListView(expand=True, padding=20, spacing=15, controls=[ft.Text("Fotos (Max 5)", weight="bold"), ft.Container(content=images_row, height=110), txt_name, ft.Row([dd_sys, dd_cat]), ft.Row([dd_reg, dd_auth]), txt_storage, ft.Divider(), ft.Text("Detalhes", weight="bold"), ft.Row([chk_box, chk_manual]), txt_notes, ft.Container(height=20), ft.ElevatedButton("SALVAR DADOS", on_click=save_click, height=50, bgcolor=COLOR_PRIMARY, color="white"), ft.Container(height=50)])), ft.Tab(text="Valores", icon=ft.Icons.MONETIZATION_ON, content=ft.ListView(expand=True, padding=20, spacing=15, controls=[ft.Text("Financeiro", size=20, weight="bold"), txt_buy, txt_mkt, ft.Divider(), chk_sale, txt_sell, ft.Container(height=20), ft.ElevatedButton("SALVAR VALORES", on_click=save_click, height=50, bgcolor=COLOR_PRIMARY, color="white")])), ft.Tab(text="Manutenção", icon=ft.Icons.BUILD, content=ft.Container(padding=20, content=ft.Column([ft.Text("Histórico", size=18, weight="bold"), ft.Row([txt_log, ft.IconButton(ft.Icons.SEND, on_click=add_log)]), ft.Divider(), ft.Column([lv_logs], scroll=ft.ScrollMode.AUTO, expand=True)])))], expand=True)], bgcolor=COLOR_BG)
+        return ft.View("/form", controls=[
+            ft.AppBar(title=ft.Text("Item"), bgcolor=COLOR_SURFACE, actions=actions_bar),
+            ft.Tabs(selected_index=0, tabs=[
+                ft.Tab(text="Dados", icon=ft.Icons.INFO, content=ft.ListView(expand=True, padding=20, spacing=15, controls=[ft.Text("Fotos (Max 5)", weight="bold"), ft.Container(content=images_row, height=110), txt_name, ft.Row([dd_sys, dd_cat]), ft.Row([dd_reg, dd_auth]), txt_storage, ft.Divider(), ft.Text("Detalhes", weight="bold"), ft.Row([chk_box, chk_manual]), txt_notes, ft.Container(height=20), ft.ElevatedButton("SALVAR DADOS", on_click=save_click, height=50, bgcolor=COLOR_PRIMARY, color="white"), ft.Container(height=50)])),
+                ft.Tab(text="Valores", icon=ft.Icons.MONETIZATION_ON, content=ft.ListView(expand=True, padding=20, spacing=15, controls=[ft.Text("Financeiro", size=20, weight="bold"), txt_buy, txt_mkt, ft.Divider(), chk_sale, txt_sell, ft.Container(height=20), ft.ElevatedButton("SALVAR VALORES", on_click=save_click, height=50, bgcolor=COLOR_PRIMARY, color="white")])),
+                ft.Tab(text="Testes / Manutenção", icon=ft.Icons.BUILD, content=ft.Container(padding=20, content=ft.Column([ft.Text("Histórico", size=18, weight="bold"), ft.Row([txt_log, ft.IconButton(ft.Icons.SEND, on_click=add_log)]), ft.Divider(), ft.Column([lv_logs], scroll=ft.ScrollMode.AUTO, expand=True)])))
+            ], expand=True)
+        ], bgcolor=COLOR_BG)
 
+    # --- RELATÓRIO (REINSERIDO) ---
     def view_report():
-        cnt, buy, mkt = db.get_stats(); buy=buy or 0; mkt=mkt or 0
+        cnt, buy, mkt = db.get_stats()
+        buy = buy or 0
+        mkt = mkt or 0
+
         def gen_pdf(e):
             if not HAS_FPDF: show_snack("Erro biblioteca PDF", COLOR_ERROR); return
             try:
                 items = db.get_items_for_sale_report()
                 if not items: show_snack("Nada para vender", COLOR_WARNING); return
-                temp_dir = tempfile.gettempdir(); fname = f"Vendas_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"; fpath = os.path.join(temp_dir, fname)
-                pdf = PDF(); pdf.add_page(); pdf.set_font("Arial", size=16); pdf.cell(190, 10, txt="Catalogo de Venda", ln=1, align="C"); pdf.ln(5)
+                
+                temp_dir = tempfile.gettempdir()
+                fname = f"Vendas_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+                fpath = os.path.join(temp_dir, fname)
+
+                pdf = PDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=16)
+                pdf.cell(190, 10, txt="Catalogo de Venda", ln=1, align="C")
+                pdf.ln(5)
+                
                 pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(220, 220, 220)
-                pdf.cell(65, 6, "Item", 1, 0, 'L', 1); pdf.cell(30, 6, "Sistema", 1, 0, 'C', 1); pdf.cell(30, 6, "Categ.", 1, 0, 'C', 1); pdf.cell(40, 6, "Obs", 1, 0, 'C', 1); pdf.cell(25, 6, "Valor", 1, 1, 'C', 1)
+                pdf.cell(65, 6, "Item", 1, 0, 'L', 1)
+                pdf.cell(30, 6, "Sistema", 1, 0, 'C', 1)
+                pdf.cell(30, 6, "Categ.", 1, 0, 'C', 1)
+                pdf.cell(40, 6, "Obs", 1, 0, 'C', 1)
+                pdf.cell(25, 6, "Valor", 1, 1, 'C', 1)
+                
                 pdf.set_font("Arial", size=8); total = 0
                 for i in items:
-                    val = i['selling_price'] or 0; total += val; nm = str(i['name']).encode('latin-1', 'replace').decode('latin-1')[:35]
-                    pdf.cell(65, 6, nm, 1); pdf.cell(30, 6, str(i['sys_name'])[:15], 1, 0, 'C'); pdf.cell(30, 6, str(i['cat_name'])[:15], 1, 0, 'C'); pdf.cell(40, 6, str(i['condition_notes'])[:22], 1); pdf.cell(25, 6, f"{val:.2f}", 1, 1, 'R')
-                pdf.set_font("Arial", 'B', 9); pdf.cell(165, 8, "TOTAL", 1, 0, 'R'); pdf.cell(25, 8, f"{total:.2f}", 1, 1, 'R')
+                    val = i['selling_price'] or 0; total += val
+                    nm = str(i['name']).encode('latin-1', 'replace').decode('latin-1')[:35]
+                    pdf.cell(65, 6, nm, 1)
+                    pdf.cell(30, 6, str(i['sys_name'])[:15], 1, 0, 'C')
+                    pdf.cell(30, 6, str(i['cat_name'])[:15], 1, 0, 'C')
+                    pdf.cell(40, 6, str(i['condition_notes'])[:22], 1)
+                    pdf.cell(25, 6, f"{val:.2f}", 1, 1, 'R')
+                
+                pdf.set_font("Arial", 'B', 9)
+                pdf.cell(165, 8, "TOTAL", 1, 0, 'R')
+                pdf.cell(25, 8, f"{total:.2f}", 1, 1, 'R')
+                
                 pdf.output(fpath)
-                try: page.share_files_with_path([fpath])
-                except: show_snack(f"Salvo em: {fpath}", COLOR_WARNING)
+                try:
+                    page.share_files_with_path([fpath])
+                except:
+                    show_snack(f"Salvo em: {fpath}", COLOR_WARNING)
+
             except Exception as x: show_snack(f"Erro PDF: {x}", COLOR_ERROR)
-        
-        def card(t, v, c): return ft.Container(content=ft.Column([ft.Text(t, size=12, color="grey"), ft.Text(v, size=18, weight="bold", color=c)], alignment="center", horizontal_alignment="center"), bgcolor=COLOR_SURFACE, padding=15, border_radius=10, expand=True)
-        # CORRIGIDO: Agora usa a função global formatar_moeda
-        return ft.View("/report", controls=[ft.AppBar(title=ft.Text("Relatório"), bgcolor=COLOR_SURFACE), ft.ListView(expand=True, padding=20, spacing=20, controls=[ft.Container(content=ft.Column([ft.Text("Total Ativo", color="grey"), ft.Text(str(cnt), size=40, weight="bold")], horizontal_alignment="center"), alignment=ft.alignment.center, padding=20), ft.Row([card("Investido", formatar_moeda(buy), COLOR_ERROR), card("Estimado", formatar_moeda(mkt), COLOR_SUCCESS)]), ft.Divider(), ft.ListTile(title=ft.Text("Gerar e Compartilhar PDF"), subtitle=ft.Text("Itens marcados 'À Venda'"), leading=ft.Icon(ft.Icons.SHARE, color=COLOR_PRIMARY), bgcolor=COLOR_SURFACE, shape=ft.RoundedRectangleBorder(radius=10), on_click=gen_pdf)])], bgcolor=COLOR_BG)
+
+        def card(t, v, c):
+            return ft.Container(content=ft.Column([ft.Text(t, size=12, color="grey"), ft.Text(v, size=18, weight="bold", color=c)], alignment="center", horizontal_alignment="center"), bgcolor=COLOR_SURFACE, padding=15, border_radius=10, expand=True)
+
+        return ft.View(
+            "/report",
+            controls=[
+                ft.AppBar(title=ft.Text("Relatório"), bgcolor=COLOR_SURFACE),
+                ft.ListView(
+                    expand=True, padding=20, spacing=20,
+                    controls=[
+                        ft.Container(content=ft.Column([ft.Text("Total Ativo", color="grey"), ft.Text(str(cnt), size=40, weight="bold")], horizontal_alignment="center"), alignment=ft.alignment.center, padding=20),
+                        ft.Row([card("Investido", formatar_moeda(buy), COLOR_ERROR), card("Estimado", formatar_moeda(mkt), COLOR_SUCCESS)]),
+                        ft.Divider(),
+                        ft.ListTile(title=ft.Text("Gerar e Compartilhar PDF"), subtitle=ft.Text("Itens marcados 'À Venda'"), leading=ft.Icon(ft.Icons.SHARE, color=COLOR_PRIMARY), bgcolor=COLOR_SURFACE, shape=ft.RoundedRectangleBorder(radius=10), on_click=gen_pdf)
+                    ]
+                )
+            ],
+            bgcolor=COLOR_BG
+        )
 
     def view_aux_manager():
         tbl = aux_context["table"]; ttl = aux_context["title"]
@@ -388,11 +467,13 @@ def main(page: ft.Page):
             for i in it: lv.controls.append(ft.Container(content=ft.Row([ft.GestureDetector(content=ft.Text(i['name'], weight="bold", size=16), on_tap=lambda e, id=i['id'], val=i['name']: open_edit(id, val), expand=True), ft.IconButton(ft.Icons.DELETE, icon_color=COLOR_ERROR, on_click=lambda e, id=i['id']: dele(id))]), bgcolor=COLOR_SURFACE, padding=15, border_radius=5))
             page.update()
         def save_add(e):
-            if txt_new.value: ok,m=db.add_aux(tbl,txt_new.value); show_snack(m,COLOR_SUCCESS if ok else COLOR_ERROR); 
+            ok, m = db.add_aux(tbl,txt_new.value)
+            if txt_new.value: show_snack(m,COLOR_SUCCESS if ok else COLOR_ERROR); 
             if ok: txt_new.value=""; page.close(dlg_add); load()
         def save_edit(e): 
             nonlocal edit_id; 
-            if txt_edit.value: ok,m=db.update_aux(tbl,edit_id,txt_edit.value); show_snack(m,COLOR_SUCCESS if ok else COLOR_ERROR); 
+            ok, m = db.update_aux(tbl,edit_id,txt_edit.value)
+            if txt_edit.value: show_snack(m,COLOR_SUCCESS if ok else COLOR_ERROR); 
             if ok: page.close(dlg_edit); load()
         def dele(uid): 
             if db.delete_aux(tbl, uid): show_snack("Apagado"); load()
@@ -433,4 +514,4 @@ def main(page: ft.Page):
     page.on_route_change = route_change; page.on_view_pop = view_pop; page.go(page.route)
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(target=main, assets_dir="assets")
